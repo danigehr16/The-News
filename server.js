@@ -1,10 +1,12 @@
 // Dependencies
 var express = require("express");
+var bodyParser = require("body-parser");
 var logger = require("morgan")
 var mongoose = require("mongoose");
+var path = require("path");
 
 // Requiring Note and Article and Routes models
-var Note = require("./models/Note.js");
+var Note = require("./models/Note");
 var Article = require("./models/Article.js");
 
 // Scraping tools
@@ -22,6 +24,9 @@ var app = express();
 
 // Use morgan logger for logging requests
 app.use(logger("dev"));
+app.use(bodyParser.urlencoded({
+    extended: false
+}));
 
 // parse request body as JSON
 app.use(express.urlencoded({ extended: true }));
@@ -74,15 +79,23 @@ app.get("/scrape", function (req, res) {
             result.link = $(this)
                 .children("a")
                 .attr("href");
+            result.summary = $(this)
+                .children("a")
+                .text();
 
-            // create a new article using the result object built from scraping
-            db.Article.create(result)
-                .then(function (dbArticle) {
-                    console.log(dbArticle);
-                })
-                .catch(function (error) {
+            // create a new article
+            var entry = new Article(result);
+
+            // saving new article to db
+            entry.save(function (error, doc) {
+                if (error) {
                     console.log(error)
-                });
+                }
+                else {
+                    console.log(doc)
+                }
+            })
+
 
         });
         res.send("Scrape Complete");
@@ -91,10 +104,93 @@ app.get("/scrape", function (req, res) {
 
 
 // route for getting all articles from the db
-app.get("/articles", function(req, res){
-    db.Article.find({})
-    .then(function(dbArticle){
-        res.json(dbArticle);
+app.get("/articles", function (req, res) {
+    db.Article.find({}, function (error, doc) {
+        if (error) {
+            console.log(error)
+        }
+        else {
+            res.json(doc)
+        }
+    });
+});
+
+// grab article by its object id
+app.get("/articles/:id", function (req, res) {
+    Article.findOne({ " _id": req.params.id }).populate("note").exec(function (error, doc) {
+        if (error) {
+            console.log(error);
+        }
+        else {
+            res.json(doc);
+        }
+    });
+});
+
+// save the article
+app.post("/articles/save/:id", function (req, res) {
+    Article.findOneAndUpdate({ "_id": req.params.id }, { "saved": true }).exec(function (error, doc) {
+        if (error) {
+            console.log(error);
+        }
+        else {
+            res.send(doc);
+        }
+    });
+});
+
+// Delete an article
+app.post("/articles/delete/:id", function (req, res) {
+    Article.findOneAndUpdate({ "_id": req.params.id }, { "saved": false, "notes": [] }).exec(function (error, doc) {
+        if (error) {
+            console.log(error);
+        }
+        else {
+            res.send(doc);
+        }
+    });
+});
+
+// create a new note
+app.post("/notes/save/:id", function (req, res) {
+    var newNote = new Note({
+        body: req.body.text,
+        article: req.params.id
+    });
+    console.log(req.body);
+
+    newNote.save(function (error, note) {
+        if (error) {
+            console.log(error);
+        }
+        else {
+            Article.findOneAndUpdate({ "_id": req.params.id }, { $push: { "notes": note } }).exec(function (error) {
+                if (error) {
+                    console.log(error);
+                    res.send(error);
+                }
+                else {
+                    res.send(note);
+                }
+            });
+        }
+    });
+});
+
+// delete a note
+app.delete("/note/delete/:note_id/:article_id", function (req, res) {
+    Note.findOneAndRemove({ "_id": req.params.note_id }, function (error) {
+        if (error) {
+            console.log(error);
+            res.send(error);
+        }
+        else {
+            Article.findOneAndUpdate({ "_id": req.params.article_id }, { $pull: { "notes": req.params.note_id } }).exec(function (error) {
+                if (error) {
+                    console.log("Note Deleted")
+                }
+            });
+        }
     });
 });
 
